@@ -117,8 +117,15 @@
 ;;(csk-hole :dia 1 :csk-dia 1.5 :csk-angle 100 :depth nil)
 ;;(csk-hole :dia 1 :csk-dia 1.5 :csk-angle 100 :depth "None")
 
-(defun line-to (x y)
-  (format nil "lineTo(~a, ~a)" x y))
+(defun line-to (x &optional (y nil))
+  (if y
+    (format nil "lineTo(~a, ~a)" x y)
+    (format nil "lineTo(~a, ~a)" (car x) (second x))))
+
+(defun move-to (x &optional (y nil))
+  (if y
+    (format nil "moveTo(~a, ~a)" x y)
+    (format nil "moveTo(~a, ~a)" (car x) (second x))))
 
 (defun three-point-arc (&key (p0 '(0 1)) (p1 '(2 3)))
   (format nil "threePointArc((~a, ~a), (~a, ~a))" (car p0) (second p0) (car p1) (second p1)))
@@ -146,8 +153,10 @@
   (format nil "combineSolids(~a)" x))
 ;;(combine-solids "x")
 
-(defun cut-thru-all ()
-  (format nil "cutThruAll()"))
+(defun cut-thru-all (&optional (x nil))
+  (if x
+    (format nil "cutThruAll(~a)" x)
+    (format nil "cutThruAll()")))
 ;;(cut-thru-all)
 
 (defun polygon (&key (sides 6) (dia 1))
@@ -218,23 +227,52 @@
 (defun rt (&key (a (make-turtle)) (deg 45))
   (lt :a a :deg (- deg)))
 
-(defun polyline
-  (&key
-    (points (let ((l 100) (h 20) (w 20) (t0 1)) (list (list 0 (/ H 2))
-						 (list (/ W 2) (/ H 2))
-						 (list (/ W 2) (- (/ H 2) t0))
-						 (list (/ t0 2) (- (/ H 2) t0))
-						 (list (/ t0 2) (- t0 (/ H 2)))
-						 (list (/ W 2) (- t0 (/ H 2)))
-						 (list (/ W 2) (/ H -2.0))
-						 (list 0 (/ H -2.0))))))
-  (let ((pts (join (mapcar (lambda (x) (format nil "(~a, ~a)" (car x) (second x))) points) :link ", ")))
-    (format nil "polyline([~a])" pts)))
+(defun polyline (points &key (close? nil))
+  (let ((result (append (list (move-to (car points))) (mapcar (lambda (x) (line-to x)) (cdr points)))))
+    (when close? (setf result (append result (close>))))
+    (apply '.> result)))
+;;(defun polyline (points) ;;CAUTION the issue of source code for the first point remaining '(0 0) due to first "lineTo". The first should be changed to "moveTo"  
+;;  (let ((pts (join (mapcar (lambda (x) (format nil "(~a, ~a)" (car x) (second x))) points) :link ", ")))
+;;    (format nil "polyline([~a])" pts)))
+(defun test-polyline ()
+  (polyline (let ((l 100) (h 20) (w 20) (t0 1)) (list (list 0 (/ H 2)) 
+						  (list (/ W 2) (/ H 2))
+						  (list (/ W 2) (- (/ H 2) t0))
+						  (list (/ t0 2) (- (/ H 2) t0))
+						  (list (/ t0 2) (- t0 (/ H 2)))
+						  (list (/ W 2) (- t0 (/ H 2)))
+						  (list (/ W 2) (/ H -2.0))
+						  (list 0 (/ H -2.0))))))
 
-(defun transform (&key (offset '(0 -1.5 1.0)) (rotate '(60 0 0)))
-  (let ((off (join (mapcar (lambda (x) (format nil "~a" x)) offset) :link ", "))
-	 (rot (join (mapcar (lambda (x) (format nil "~a" x)) rotate) :link ", ")))
-    (format nil "transformed(offset = (~a), rotate = (~a))" off rot)))
+(defun mirror-points (points &key (dir "Y") (copy? nil))
+  (let ((pts (gensym)))
+    (if (equalp dir "Y")
+      (setf pts (mapcar (lambda (p) (list (- (car p)) (second p))) points))
+      (setf pts (mapcar (lambda (p) (list (car p) (- (second p)))) points)))
+    (when copy? (remove-duplicates (append points (reverse pts)) :test 'equalp)))) ;;reverse for making a "cycle" of all points
+;;(let ((pts '((0 0) (1 0) (1 1) (0 1)))) (mirror-points pts :dir "Y" :copy? t))
+;;(let ((pts '((0 0) (0 1) (1 1) (1 0)))) (mirror-points pts :dir "X" :copy? t))
+
+(defun transform (&key (offset nil) (rotate nil))
+  (let ((result (gensym)) (off (gensym)) (rot (gensym)))
+    (if offset
+      (progn
+	(setf off (join (mapcar (lambda (x) (format nil "~a" x)) offset) :link ", "))
+	(setf result (format nil "transformed(offset = (~a))" off))
+	(when rotate
+	  (setf rot (join (mapcar (lambda (x) (format nil "~a" x)) rotate) :link ", "))
+	  (setf result (format nil "~a, rotate = (~a))" (subseq result 0 (- (length result) 1)) rot))
+	  ))
+      (progn
+	(setf result (format nil "transformed()"))
+	(when rotate
+	  (setf rot (join (mapcar (lambda (x) (format nil "~a" x)) rotate) :link ", "))
+	  (setf result (format nil "~arotate = (~a))" (subseq result 0 (- (length result) 1)) rot))
+	  )))
+    result))
+;;(transform)
+;;(transform :offset '(0 -1.5 1.0))
+;;(transform :rotate '(60 0 0))
 ;;(transform :offset '(0 -1.5 1.0) :rotate '(60 0 0))
 
 (defun translate (x y z)
@@ -343,7 +381,7 @@
 ;;(.> "cadquery" "Workplane('XY')" "rect(rectangle_width, rectangle_length, False)" "revolve()")
 
 (defun cadquery (process &key
-		  (init (list (import> "cadquery") (import> "show" :from "Helpers")))
+		  (init (list ( import> "division" :from "__future__") (import> "cadquery") (import> "show" :from "Helpers")))
 		  (file-name "~/example_cadquery.py"))
   (let* ((result (append init process)))
     (extend-file :data "" :file file-name :new t :newline nil)
